@@ -1,0 +1,7 @@
+config.json
+mouse.cs
+skhost.ps1
+skhost.ico
+user32.cs
+manifest.txt
+version.txt

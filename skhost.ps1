@@ -1,25 +1,25 @@
-# skHost.ps1
-# -----------
-# 
-# New in version 3.2
-#    - Refactored to use a Windows Forms Timer instead of a PowerShell Job
-#       - Reducing to a single PowerShell process instead of a job reduces resource usage and improves responsiveness.
-#    - Changed the key used for simulated input from F15 to F16 to avoid conflicts with Linux terminals including SSH and WSL in Windows Terminal.
-# New in version 3.1:
-#    -Added support for RemoteApp windows. Due to the volume of windows per RemoteApp session, limited to a whitelist only.
-#    -Enhanced debug logging
-# New in version 3.0.1:
-#    -Added support for Hyper-V keep-alive in Basic and Enhanced Session modes
-#    -Added PS Job debugging mode for development
-# New in version 3.0:
-#    -Stability improvements
-#    -Added mouse movement to keep all active RDP windows, including Azure Virtual Desktop, from going idle. RDP window cannot be minimized.
-
+<#
+.PARAMETER Install
+    Copies the script to %LocalAppData%\skHost.ps1 and creates a Start Menu shortcut.
+    Does not automatically start the application after installation.
+.PARAMETER AutoStart
+    Implies -Install and additionally creates a registry entry in HKCU Run to automatically 
+    start skHost when Windows starts. Uses conhost to ensure compatibility with hidden 
+    window execution.
+.PARAMETER Uninstall
+    Removes the installed script, Start Menu shortcut, custom icon, and auto-start registry 
+    entry. Does not terminate any currently running instances.
+.NOTES
+    - Additional files are required to use this script.
+    - See the GitHub repository for more information and documentation.
+.LINK
+    https://github.com/SaltSpectre/ps-skhost
+#>
 
 Param( 
-    [Parameter(Mandatory = $false)] [Switch] $Install, # Copies the script to AppData and creates a Start Menu shortcut
-    [Parameter(Mandatory = $false)] [Switch] $AutoStart, # $Install + creates an auto-run entry in HKCU
-    [Parameter(Mandatory = $false)] [Switch] $Uninstall   # Deletes the script from AppData and removes shortcut + auto-run
+    [Parameter(Mandatory = $false)] [Switch] $Install,  
+    [Parameter(Mandatory = $false)] [Switch] $AutoStart,
+    [Parameter(Mandatory = $false)] [Switch] $Uninstall 
 )
 
 if ($AutoStart) { $Install = $true }
@@ -28,43 +28,6 @@ if ($Uninstall) { $Install = $false }
 $ParentPath = Split-Path ($MyInvocation.MyCommand.Path) -Parent
 
 Add-Type -AssemblyName System.Drawing, System.Windows.Forms
-
-# https://docs.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-extracticonexw
-# https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-destroyicon
-# This function allows for the extraction of an icon at an index from a system icon library. Also helps us dispose of handles.
-Add-Type -TypeDefinition '
-    using System;
-    using System.Runtime.InteropServices;
-
-    public class Shell32_Extract {
-
-        [DllImport(
-            "Shell32.dll",
-            EntryPoint = "ExtractIconExW",
-            CharSet  = CharSet.Unicode,
-            ExactSpelling = true,
-            CallingConvention = CallingConvention.StdCall
-        )]
-
-        public static extern int ExtractIconEx(
-            string lpszFile,
-            int iconIndex,
-            out IntPtr phiconLarge,
-            out IntPtr phiconSmall,
-            int nIcons
-        );
-    }
-
-    public class User32_DestroyIcon {
-        
-        [DllImport(
-            "User32.dll",
-            EntryPoint = "DestroyIcon"
-        )]
-
-        public static extern int DestroyIcon(IntPtr hIcon);
-    }
-'
 
 Function Test-RegistryValue ($regkey, $name) {
     if (Get-ItemProperty -Path $regkey -Name $name -ErrorAction Ignore) {
@@ -76,26 +39,94 @@ Function Test-RegistryValue ($regkey, $name) {
     # https://adamtheautomator.com/powershell-get-registry-value/
 }
 
+Function Find-IconFile {
+    param([string]$BasePath, [string]$IconName)
+    
+    foreach ($format in @('ico', 'png', 'bmp')) {
+        $iconPath = Join-Path $BasePath "$($IconName -replace '\.[^.]*$', '').$format"
+        if (Test-Path $iconPath) {
+            return $iconPath
+        }
+    }
+    return $null
+}
+
+Function New-IconFromFile {
+    param([string]$IconPath)
+    
+    if (-not (Test-Path $IconPath)) { return $null }
+    
+    $extension = [System.IO.Path]::GetExtension($IconPath).ToLower()
+    
+    switch ($extension) {
+        '.ico' { return [System.Drawing.Icon]::new($IconPath) }
+        { $_ -in '.png', '.bmp' } {
+            $bitmap = [System.Drawing.Bitmap]::new($IconPath)
+            $hIcon = $bitmap.GetHicon()
+            $icon = [System.Drawing.Icon]::FromHandle($hIcon)
+            $bitmap.Dispose()
+            return $icon
+        }
+        default {
+            Write-Warning "Unsupported icon format: $extension"
+            return $null
+        }
+    }
+}
+
 # Install logic. Does not start after install, even if autostart is specified.
 Function Install-skHost {
-    Copy-Item -Path $PSCommandPath -Destination "$env:LOCALAPPDATA\skHost.ps1" -Force -Confirm:$false
+    $InstallPath = "$env:LOCALAPPDATA\SaltSpectre\ps-skhost"
+    $ManifestPath = Join-Path $ParentPath "manifest.txt"
+    
+    # Create installation directory
+    if (-not (Test-Path $InstallPath)) {
+        New-Item -Path $InstallPath -ItemType Directory -Force | Out-Null
+    }
+    
+    # Copy files listed in manifest.txt
+    if (Test-Path $ManifestPath) {
+        $ManifestFiles = Get-Content $ManifestPath | Where-Object { $_.Trim() -and -not $_.StartsWith('#') }
+        foreach ($file in $ManifestFiles) {
+            $SourceFile = Join-Path $ParentPath $file.Trim()
+            $DestFile = Join-Path $InstallPath $file.Trim()
+            
+            if (Test-Path $SourceFile) {
+                # Create destination directory if needed
+                $DestDir = Split-Path $DestFile -Parent
+                if ($DestDir -and -not (Test-Path $DestDir)) {
+                    New-Item -Path $DestDir -ItemType Directory -Force | Out-Null
+                }
+                Copy-Item -Path $SourceFile -Destination $DestFile -Force -Confirm:$false
+                Write-Host "Copied: $file" -ForegroundColor Green
+            } else {
+                Write-Error "File not found: $file"
+                return
+            }
+        }
+    } else {
+        Write-Error "manifest.txt not found. Installation cannot proceed without manifest file."
+        return
+    }
+    
     if ($AutoStart) {
         if (Test-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" "skHost") {
             Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "skHost" -Force -Confirm:$false
         }
         # Specify to use conhost in case Windows Terminal is set as default as it does not support WindowStyle Hidden like conhost
-        New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "skHost" -PropertyType String -Value "conhost powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File %LocalAppData%\skHost.ps1" -Force -Confirm:$false
+        New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "skHost" -PropertyType String -Value "conhost powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstallPath\skhost.ps1`"" -Force -Confirm:$false
     }
 
     # Create Start Menu Shortcut
     $WScript = New-Object -ComObject ("WScript.Shell")
     $Shortcut = $Wscript.CreateShortcut("$env:APPDATA\Microsoft\Windows\Start Menu\skHost.lnk")
     $Shortcut.TargetPath = "$env:SystemRoot\System32\Conhost.exe" 
-    $Shortcut.Arguments = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File %LocalAppData%\skHost.ps1'
-    # Use my fancy icon if it is located in AppData or the script's parent path, otherwise fallback to star icon from Shell32.dll
-    if ((Test-Path "$ParentPath\skHost.ico") -and !(Test-path "$env:LOCALAPPDATA\skhost.ico")) { Copy-Item "$ParentPath\skHost.ico" "$env:LOCALAPPDATA\skHost.ico" }
-    if (Test-path "$env:LOCALAPPDATA\skhost.ico") {
-        $Shortcut.IconLocation = "$env:LOCALAPPDATA\skhost.ico"
+    $Shortcut.Arguments = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstallPath\skhost.ps1`""
+    
+    # Set shortcut icon
+    $installedIcon = Find-IconFile -BasePath $InstallPath -IconName "skHost"
+    if ($installedIcon) {
+        $Shortcut.IconLocation = $installedIcon
     }
     else {
         $Shortcut.IconLocation = "$env:SystemRoot\system32\shell32.dll,43"
@@ -110,27 +141,34 @@ if ($Install) {
 
 # Uninstall logic. Does not stop currently running script.
 if ($Uninstall) {
+    # Remove new installation directory structure
+    $NewInstallPath = "$env:LOCALAPPDATA\SaltSpectre\ps-skhost"
+    if (Test-Path $NewInstallPath) {
+        Remove-Item -Path $NewInstallPath -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
+        Write-Host "Removed: $NewInstallPath" -ForegroundColor Green
+    }
+    
+    # Clean up old installation files (backward compatibility)
     Remove-Item -Path "$env:LOCALAPPDATA\skHost.ps1" -Force -Confirm:$false -ErrorAction SilentlyContinue
-    Remove-Item -Path "$env:LOCALAPPDATA\skHost.ico" -Force -Confirm:$false -ErrorAction SilentlyContinue
+    foreach ($format in @('ico', 'png', 'bmp')) {
+        Remove-Item -Path "$env:LOCALAPPDATA\skHost.$format" -Force -Confirm:$false -ErrorAction SilentlyContinue
+    }
+    
+    # Remove shared components
     Remove-Item -Path "$env:APPDATA\Microsoft\Windows\Start Menu\skHost.lnk" -Force -Confirm:$false -ErrorAction SilentlyContinue
     Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "skHost" -Force -Confirm:$false -ErrorAction SilentlyContinue
+    
+    Write-Host "Uninstall completed." -ForegroundColor Green
     Break
 }
 
-# Use my fancy icon if it is located in AppData, otherwise fallback to star icon from Shell32.dll.
-if (Test-Path "$env:LOCALAPPDATA\skHost.ico") {
-    $SysTrayIconImage = New-Object System.Drawing.Icon ("$env:LOCALAPPDATA\skHost.ico")
-}
-else {
-    [System.IntPtr] $icoHandleSm = 0
-    [System.IntPtr] $icoHandleLg = 0
-    [void] [Shell32_Extract]::ExtractIconEx("%systemroot%\system32\shell32.dll", 43, [ref] $icoHandleLg, [ref] $icoHandleSm, 1)
-    $SysTrayIconImage = [System.Drawing.Icon]::FromHandle($icoHandleSm)
-}
+# Create system tray icon
+$iconFile = Find-IconFile -BasePath $PSScriptRoot -IconName "skHost"
+$SysTrayIconImage = New-IconFromFile -IconPath $iconFile
 
 # Create the system tray icon
 $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
-$notifyIcon.Text = "skHost"
+$notifyIcon.Text = "skHost ($(Get-Content "$PSScriptRoot\version.txt" -TotalCount 1))"
 $notifyIcon.Icon = $SysTrayIconImage
 $notifyIcon.ContextMenu = New-Object System.Windows.Forms.ContextMenu
 $menuItem = New-Object System.Windows.Forms.MenuItem
@@ -141,6 +179,7 @@ $menuItem.add_click({
         $skTimer.Dispose()
         $notifyIcon.Visible = $false
         $notifyIcon.Dispose()
+        Start-Sleep 1
         [System.Windows.Forms.Application]::Exit()
     })
 $notifyIcon.ContextMenu.MenuItems.AddRange($menuItem)
@@ -148,83 +187,13 @@ $notifyIcon.Visible = $true
 
 #region CoreLogic and Helper Functions
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type -TypeDefinition $(Get-Content "$PSScriptRoot\user32.cs" -Raw)
+Add-Type -TypeDefinition $(Get-Content "$PSScriptRoot\mouse.cs" -Raw)
 
-Add-Type -TypeDefinition '
-    using System;
-    using System.Runtime.InteropServices;
-    public static class User32 {
-        public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-        [DllImport("user32.dll")]
-        public static extern bool EnumWindows(EnumWindowsProc enumFunc, IntPtr lParam);
-        [DllImport("user32.dll")]
-        public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
-        [DllImport("user32.dll")]
-        public static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
-        [DllImport("user32.dll")]
-        public static extern IntPtr GetForegroundWindow();
-        [DllImport("user32.dll")]
-        public static extern bool SetForegroundWindow(IntPtr hWnd);
-    }
-'
+# Load configuration file
+$Config = Get-Content "$PSScriptRoot\config.json" | ConvertFrom-Json
 
 Function Move-MouseCursor {
-    Add-Type -TypeDefinition '
-    using System;
-    using System.Runtime.InteropServices;
-    public static class Mouse {
-        [StructLayout(LayoutKind.Sequential)]
-        public struct INPUT {
-        public int type;
-        public MOUSEINPUT mi;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct MOUSEINPUT {
-        public int dx;
-        public int dy;
-        public uint mouseData;
-        public uint dwFlags;
-        public uint time;
-        public IntPtr dwExtraInfo;
-        }
-
-        [DllImport("user32.dll")]
-        public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-
-        [DllImport("user32.dll")]
-        public static extern bool GetCursorPos(out POINT lpPoint);
-
-        [DllImport("user32.dll")]
-        public static extern int GetSystemMetrics(int nIndex);
-
-        [StructLayout(LayoutKind.Sequential)]
-        public struct POINT {
-        public int x;
-        public int y;
-        }
-
-        const int INPUT_MOUSE = 0;
-        const int MOUSEEVENTF_MOVE = 0x0001;
-        const int MOUSEEVENTF_ABSOLUTE = 0x8000;
-        const int SM_CXSCREEN = 0;
-        const int SM_CYSCREEN = 1;
-
-        public static void MoveMouse() {
-        INPUT Input = new INPUT();
-        POINT CurrentPosition;
-
-        GetCursorPos(out CurrentPosition);
-
-        Input.type = INPUT_MOUSE;
-        Input.mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
-
-        Input.mi.dx = (int)(CurrentPosition.x * (65536.0f / GetSystemMetrics(SM_CXSCREEN)));
-        Input.mi.dy = (int)(CurrentPosition.y * (65536.0f / GetSystemMetrics(SM_CYSCREEN)));
-
-        SendInput(1, new INPUT[] { Input }, Marshal.SizeOf(typeof(INPUT)));
-        }
-    }
-'
     [Mouse]::MoveMouse()
 }
 
@@ -263,12 +232,8 @@ Function Get-WindowsByClass {
     return $EnumeratedWindows
 }
 
-# Things get weird if every window in a RemoteApp session is called to the foreground. Define specific windows. Alternatively use skRAHelper mode.
-# TODO: Actually implement a skRAHelper mode
-$RemoteAppWhiteList = @(
-    "Teams",
-    "skRAHelper"
-)
+# Things get weird if every window in a RemoteApp session is called to the foreground. Define specific windows.
+$RemoteAppWhiteList = $Config.remoteAppWhitelist
 
 $RdpWindowClasses = @(
     "TscShellContainerClass", # MSTSC/MSRDC
@@ -277,7 +242,7 @@ $RdpWindowClasses = @(
 )
 
 Function Invoke-skLogic {
-    Write-Host "`nDEBUG: Executing logic at $(Get-Date -Format "yyyy-MM-dd HH:mm")" -ForegroundColor Cyan
+    Write-Host "`nDEBUG: Entering main loop at $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")" -ForegroundColor Cyan
 
     [System.Windows.Forms.SendKeys]::SendWait("{F16}")    # Presses the F16 key
     Write-Host "DEBUG: Sent simulated keypress to the host: {F16}" -ForegroundColor Green
@@ -310,6 +275,7 @@ Function Invoke-skLogic {
     else {
         Write-Host "DEBUG: No matching windows found--nothing to do." -ForegroundColor Yellow
     }
+    Write-Host "DEBUG: Main loop completed at $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")" -ForegroundColor Cyan
 }
 
 # Create a Windows Forms Timer for the main logic
@@ -318,7 +284,7 @@ $skTimer.Interval = 120000  # 120,000 milliseconds = 2 minutes
 $skTimer.Add_Tick({
         Invoke-skLogic
     })
-Invoke-skLogic # First run immediately
+Invoke-skLogic # Immediately run on script execution
 $skTimer.Start() # Start the Timer
 
 # Create an application context to keep the system tray icon interactive
