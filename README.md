@@ -1,4 +1,4 @@
-# skHost: An idle prevention tool for local, RDP, and Hyper-V sessions
+# skHost: An idle prevention tool for local, RDP, RemoteApp, and Hyper-V sessions written entirely in PowerShell for maximum portability.
 
 ## Description
 skHost is a Windows tool that runs in the background to keep a system alive. It does this by simulating keyboard input (F16 key) and mouse movement every 2 minutes. The mouse cursor does not visibly move but the input is registered by the system.
