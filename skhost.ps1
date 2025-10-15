@@ -193,6 +193,21 @@ Add-Type -TypeDefinition $(Get-Content "$PSScriptRoot\mouse.cs" -Raw)
 # Load configuration file
 $Config = Get-Content "$PSScriptRoot\config.json" | ConvertFrom-Json
 
+# Read keystroke from config file or default to Ctrl+Shift+F15
+if ($Config.skHostKeystroke -and $Config.skHostKeystroke.Trim() -ne "") {
+    $skHostKeystroke = $Config.skHostKeystroke.Trim()
+} else {
+    $skHostKeystroke = "^+{F15}"  # Ctrl+Shift+F15
+}   
+
+# Validate keystroke and use Ctrl+Shift+F15 if invalid
+Try {
+    [System.Windows.Forms.SendKeys]::SendWait($skHostKeystroke)
+} Catch {
+    Write-Warning "Invalid keystroke format in config.json. Defaulting to Ctrl+Shift+F15."
+    $skHostKeystroke = "^+{F15}"
+}
+
 Function Move-MouseCursor {
     [Mouse]::MoveMouse()
 }
@@ -244,8 +259,8 @@ $RdpWindowClasses = @(
 Function Invoke-skLogic {
     Write-Host "`nDEBUG: Entering main loop at $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")" -ForegroundColor Cyan
 
-    [System.Windows.Forms.SendKeys]::SendWait("{F16}")    # Presses the F16 key
-    Write-Host "DEBUG: Sent simulated keypress to the host: {F16}" -ForegroundColor Green
+    [System.Windows.Forms.SendKeys]::SendWait("$skHostKeystroke")    # Sends the configured keystroke to the host
+    Write-Host "DEBUG: Sent simulated keypress to the host: $skHostKeystroke" -ForegroundColor Green
 
     Write-Host "DEBUG: Searching for RDP, RemoteApp, and Hyper-V windows across all desktops." -ForegroundColor Yellow
     $ActiveRdpWindows = Get-WindowsByClass -ClassName $RdpWindowClasses

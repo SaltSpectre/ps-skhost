@@ -2,5 +2,6 @@
     "remoteAppWhitelist": [
         "Teams",
         "skRAHelper"
-    ]
+    ],
+    "skHostKeystroke": "^+{F15}"
 }
