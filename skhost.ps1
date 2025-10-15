@@ -216,6 +216,9 @@ if ($Config.loopIntervalSeconds -and $Config.loopIntervalSeconds -is [int] -and 
     $skHostInterval = 240000  # Default to 4 minutes
 }
 
+# Update the tooltip to show the configured keystroke and interval
+$notifyIcon.Text = "skHost ($(Get-Content "$PSScriptRoot\version.txt" -TotalCount 1))`nKeystroke: $skHostKeystroke`nInterval: $($skHostInterval / 1000) seconds"
+
 Function Move-MouseCursor {
     [Mouse]::MoveMouse()
 }
