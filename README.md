@@ -82,7 +82,7 @@ By default it will use Ctrl+Shift+F15 as the keystroke that is sent to the syste
 
 For a list of all possible keystrokes, refer to the [SendKeys Class documentation on Microsoft Learn](https://learn.microsoft.com/en-us/dotnet/api/system.windows.forms.sendkeys).
 
-## Changing the execution interval
+### Changing the execution interval
 By default the script will invoke the keep-alive logic every 240 seconds (4 minutes). This can be configured in `config.json` via the `loopIntervalSeconds` property. The value must be in seconds and must be a positive integer value. The script will validate the value and revert back to 240 seconds if the configured value is invalid.
 
 ### Required Files and Configuration
