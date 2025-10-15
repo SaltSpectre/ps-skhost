@@ -204,8 +204,16 @@ if ($Config.skHostKeystroke -and $Config.skHostKeystroke.Trim() -ne "") {
 Try {
     [System.Windows.Forms.SendKeys]::SendWait($skHostKeystroke)
 } Catch {
-    Write-Warning "Invalid keystroke format in config.json. Defaulting to Ctrl+Shift+F15."
+    Write-Warning "Invalid or unconfigured keystroke format in config.json. Defaulting to Ctrl+Shift+F15."
     $skHostKeystroke = "^+{F15}"
+}
+
+# Read loop interval from config file or default to 4 minutes
+if ($Config.loopIntervalSeconds -and $Config.loopIntervalSeconds -is [int] -and $Config.loopIntervalSeconds -gt 0) {
+    $skHostInterval = $Config.loopIntervalSeconds * 1000  # Convert to milliseconds
+} else {
+    Write-Warning "Invalid or unconfigured loop interval format in config.json. Defaulting to 4 minutes."
+    $skHostInterval = 240000  # Default to 4 minutes
 }
 
 Function Move-MouseCursor {
@@ -295,7 +303,7 @@ Function Invoke-skLogic {
 
 # Create a Windows Forms Timer for the main logic
 $skTimer = New-Object System.Windows.Forms.Timer
-$skTimer.Interval = 120000  # 120,000 milliseconds = 2 minutes
+$skTimer.Interval = $skHostInterval  # Use the configured interval
 $skTimer.Add_Tick({
         Invoke-skLogic
     })

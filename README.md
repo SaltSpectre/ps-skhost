@@ -1,7 +1,7 @@
 # skHost: An idle prevention tool for local, RDP, RemoteApp, and Hyper-V sessions written entirely in PowerShell for maximum portability.
 
 ## Description
-skHost is a Windows tool that runs in the background to keep a system alive. It does this by simulating keyboard input (Default: Ctrl+Shift+F15) and mouse movement every 2 minutes. The mouse cursor does not visibly move but the input is registered by the system.
+skHost is a Windows tool that runs in the background to keep a system alive. It does this by simulating keyboard input (Default: Ctrl+Shift+F15) and mouse movement every 4 minutes (240 seconds). The mouse cursor does not visibly move but the input is registered by the system.
 
 In addition to keeping a physical machine session active, skHost will also bring forward all non-minimized RDP, (whitelisted) RemoteApp, and Hyper-V VM windows to simulate mouse movement at the same interval. This keeps these sessions from timing out. For RemoteApp windows, skHost uses a configurable whitelist to determine which windows to activate.
  
@@ -81,6 +81,9 @@ This parameter will remove the shortcut and autostart entries as applicable and 
 By default it will use Ctrl+Shift+F15 as the keystroke that is sent to the system. I have experimented with several different keystrokes and found many to be problematic. It is impossible to identify a universally safe keystroke, so if you find this to be problematic, you can change the keystroke by modifying the `skHostKeystroke` variable in `config.json`. The script will validate the keystroke value and revert back to Ctrl+Shift+F15 if the configured value is invalid.
 
 For a list of all possible keystrokes, refer to the [SendKeys Class documentation on Microsoft Learn](https://learn.microsoft.com/en-us/dotnet/api/system.windows.forms.sendkeys).
+
+## Changing the execution interval
+By default the script will invoke the keep-alive logic every 240 seconds (4 minutes). This can be configured in `config.json` via the `loopIntervalSeconds` property. The value must be in seconds and must be a positive integer value. The script will validate the value and revert back to 240 seconds if the configured value is invalid.
 
 ### Required Files and Configuration
 
