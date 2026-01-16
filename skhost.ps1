@@ -270,8 +270,28 @@ $RdpWindowClasses = @(
 Function Invoke-skLogic {
     Write-Host "`nDEBUG: Entering main loop at $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")" -ForegroundColor Cyan
 
-    [System.Windows.Forms.SendKeys]::SendWait("$skHostKeystroke")    # Sends the configured keystroke to the host
-    Write-Host "DEBUG: Sent simulated keypress to the host: $skHostKeystroke" -ForegroundColor Green
+    # Create temporary window ("skSink"), activate it, send keystroke via SendKeys, then destroy it
+    Write-Host "DEBUG: Creating temporary window for keystroke activity" -ForegroundColor Yellow
+    $hInstance = [User32]::GetModuleHandle($null)
+    $skSink = [User32]::CreateWindowEx(0, "Static", "", 0x10000000, -10000, -10000, 1, 1, [IntPtr]::Zero, [IntPtr]::Zero, $hInstance, [IntPtr]::Zero)
+    
+    if ($skSink -ne [IntPtr]::Zero) {
+        Write-Host "DEBUG: Temporary window created with handle: $skSink" -ForegroundColor Green
+        
+        # Activate the temporary window
+        [User32]::SetForegroundWindow($skSink) | Out-Null
+        Write-Host "DEBUG: skSink temporary window activated" -ForegroundColor Green
+        
+        # Send keystroke using SendKeys (goes to active window)
+        [System.Windows.Forms.SendKeys]::SendWait("$skHostKeystroke")
+        Write-Host "DEBUG: Sent keystroke to skSink: $skHostKeystroke" -ForegroundColor Green
+        
+        # Destroy the temporary window
+        [User32]::DestroyWindow($skSink) | Out-Null
+        Write-Host "DEBUG: skSink temporary window destroyed" -ForegroundColor Green
+    } else {
+        Write-Host "DEBUG: Failed to create skSink temporary window" -ForegroundColor Red
+    }
 
     Write-Host "DEBUG: Searching for RDP, RemoteApp, and Hyper-V windows across all desktops." -ForegroundColor Yellow
     $ActiveRdpWindows = Get-WindowsByClass -ClassName $RdpWindowClasses
