@@ -111,7 +111,7 @@ A custom icon file can be included in the same directory as the script to displa
 
 ## License
 
-This project is proudly open source. Please refer to `LICENSE.md` for licensing information.
+This project is proudly open source under the MIT License. Please refer to `LICENSE` for licensing information.
 
 ## Contributing
 
