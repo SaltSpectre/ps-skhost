@@ -37,7 +37,7 @@ jobs:
         
     - name: Package archive
       run: |
-        zip "skHost-${{ steps.version.outputs.VERSION }}.zip" $(cat manifest.txt)
+        cat manifest.txt | xargs zip "skHost-${{ steps.version.outputs.VERSION }}.zip"
 
     - name: Upload ZIP artifact
       uses: actions/upload-artifact@v4
@@ -62,15 +62,14 @@ jobs:
         tag_name: ${{ needs.build-zip.outputs.tag }}
         name: "skHost ${{ needs.build-zip.outputs.version }}"
         body: |
-          **skHost ${{ needs.build-zip.outputs.version }}**
+          *Automated release built from commit ${{ github.sha }}*
           
-          Automated release built from commit ${{ github.sha }}
-          
-          **Downloads:**
+          ## Downloads:
           - `skHost-${{ needs.build-zip.outputs.version }}.zip` - Main application package.
           
+          ## Installation:
           See README.md for installation and usage instructions.
-          
+
         files: artifacts/**/*
         prerelease: false
         draft: true
