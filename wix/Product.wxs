@@ -73,14 +73,14 @@
         <Shortcut Id="ApplicationStartMenuShortcut"
                   Name="skHost"
                   Description="An idle prevention tool for local, RDP, RemoteApp, and Hyper-V sessions written entirely in PowerShell for maximum portability."
-                  Target="[SystemFolder]conhost.exe"
+                  Target="[System64Folder]conhost.exe"
                   Arguments="powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File &quot;[INSTALLFOLDER]skhost.ps1&quot;"
                   WorkingDirectory="INSTALLFOLDER"
                   Icon="ProductIcon" />
         <Shortcut Id="UninstallProduct"
                   Name="Uninstall skHost"
                   Description="Uninstalls skHost"
-                  Target="[SystemFolder]msiexec.exe"
+                  Target="[System64Folder]msiexec.exe"
                   Arguments="/x [ProductCode]" />
         <RemoveFolder Id="CleanUpShortCut" Directory="ApplicationProgramsFolder" On="uninstall" />
         <RemoveFolder Id="CleanUpManufacturerPrograms" Directory="ManufacturerProgramsFolder" On="uninstall" />
