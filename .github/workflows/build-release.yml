@@ -87,13 +87,26 @@ jobs:
         
         dotnet build -c Release -p:Version=$msiVersion
     
+    - name: Rename MSI with version
+      run: |
+        $version = "${{ steps.version.outputs.VERSION }}"
+        $msiFile = Get-Item "wix\bin\Release\**\*.msi" | Select-Object -First 1
+        if ($msiFile) {
+          $newName = "skHost-$version.msi"
+          Move-Item -Path $msiFile.FullName -Destination $newName -Force
+          Write-Host "Renamed MSI to: $newName"
+        } else {
+          Write-Error "MSI file not found"
+          exit 1
+        }
+    
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
         name: skhost-packages
         path: |
           skHost-${{ steps.version.outputs.VERSION }}.zip
-          wix/bin/Release/**/*.msi
+          skHost-${{ steps.version.outputs.VERSION }}.msi
         retention-days: 1
 
   create-release:
