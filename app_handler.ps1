@@ -68,9 +68,11 @@ Function Install-skHost {
     if ($AutoStart) {
         if (Test-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" "skHost") {
             Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "skHost" -Force -Confirm:$false
+            Write-skSessionLog -Message "ℹ️ Removed existing autostart registry entry for skHost." -Type "INFO" -Color Cyan
         }
         # Specify to use conhost in case Windows Terminal is set as default as it does not support WindowStyle Hidden like conhost
-        New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "skHost" -PropertyType String -Value "conhost powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstallPath\skhost.ps1`"" -Force -Confirm:$false
+        New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "skHost" -PropertyType String -Value "conhost powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstallPath\skhost.ps1`"" -Force -Confirm:$false | Out-Null
+        Write-skSessionLog -Message "✔️ Created autostart registry entry for skHost." -Type "SUCCESS" -Color Green
     }
 
     # Create Start Menu Shortcut
@@ -88,6 +90,7 @@ Function Install-skHost {
         $Shortcut.IconLocation = "$env:SystemRoot\system32\shell32.dll,43"
     }
     $Shortcut.Save()
+    Write-skSessionLog -Message "✔️ Created Start Menu shortcut for skHost." -Type "SUCCESS" -Color Green
 }
 
 Function Uninstall-skHost {
@@ -95,18 +98,23 @@ Function Uninstall-skHost {
     $NewInstallPath = "$env:LOCALAPPDATA\SaltSpectre\ps-skhost"
     if (Test-Path $NewInstallPath) {
         Remove-Item -Path $NewInstallPath -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
-        Write-skSessionLog -Message "Removed: $NewInstallPath" -Type "SUCCESS" -Color Green
+        Write-skSessionLog -Message "✔️ Removed: $NewInstallPath" -Type "SUCCESS" -Color Green
     }
     
     # Clean up old installation files (backward compatibility)
     Remove-Item -Path "$env:LOCALAPPDATA\skHost.ps1" -Force -Confirm:$false -ErrorAction SilentlyContinue
+    Write-skSessionLog -Message "✔️ Removed old installation file: $env:LOCALAPPDATA\skHost.ps1" -Type "SUCCESS" -Color Green
     foreach ($format in @('ico', 'png', 'bmp')) {
         Remove-Item -Path "$env:LOCALAPPDATA\skHost.$format" -Force -Confirm:$false -ErrorAction SilentlyContinue
+        Write-skSessionLog -Message "✔️ Removed old installation icon file: $env:LOCALAPPDATA\skHost.$format" -Type "SUCCESS" -Color Green
     }
     
     # Remove shared components
     Remove-Item -Path "$env:APPDATA\Microsoft\Windows\Start Menu\skHost.lnk" -Force -Confirm:$false -ErrorAction SilentlyContinue
+    Write-skSessionLog -Message "✔️ Removed Start Menu shortcut: $env:APPDATA\Microsoft\Windows\Start Menu\skHost.lnk" -Type "SUCCESS" -Color Green
     Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "skHost" -Force -Confirm:$false -ErrorAction SilentlyContinue
+    Write-skSessionLog -Message "✔️ Removed autostart registry entry for skHost." -Type "SUCCESS" -Color Green
     
-    Write-skSessionLog -Message "Uninstall completed." -Type "SUCCESS" -Color Green
+    Write-skSessionLog -Message "✔️ Uninstall completed." -Type "SUCCESS" -Color Green
+    Remove-Item $SESSION_LOG -Force -Confirm:$false -ErrorAction SilentlyContinue
 }
