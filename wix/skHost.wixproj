@@ -1,7 +1,7 @@
 <Project Sdk="WixToolset.Sdk/4.0.5">
   <PropertyGroup>
     <OutputName>skHost</OutputName>
-    <SuppressIces>ICE38;ICE64</SuppressIces>
+    <SuppressIces>ICE38;ICE64;ICE91</SuppressIces>
     <Version Condition="'$(Version)' == ''">1.0.0.0</Version>
     <DefineConstants>Version=$(Version)</DefineConstants>
   </PropertyGroup>

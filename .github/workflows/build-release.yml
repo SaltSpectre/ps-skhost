@@ -90,7 +90,7 @@ jobs:
     - name: Rename MSI with version
       run: |
         $version = "${{ steps.version.outputs.VERSION }}"
-        $msiFile = Get-Item "wix\bin\Release\**\*.msi" | Select-Object -First 1
+        $msiFile = Get-ChildItem -Path "wix\bin\Release" -Filter "*.msi" -Recurse | Select-Object -First 1
         if ($msiFile) {
           $newName = "skHost-$version.msi"
           Move-Item -Path $msiFile.FullName -Destination $newName -Force
