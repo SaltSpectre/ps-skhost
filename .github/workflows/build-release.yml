@@ -10,8 +10,8 @@ permissions:
   contents: write
 
 jobs:
-  build-zip:
-    runs-on: ubuntu-latest
+  build-packages:
+    runs-on: windows-latest
     outputs:
       version: ${{ steps.version.outputs.VERSION }}
       tag: ${{ steps.version.outputs.TAG }}
@@ -22,32 +22,95 @@ jobs:
 
     - name: Generate version
       id: version
+      shell: pwsh
       run: |
-        date=$(date '+%y.%-m.%-d')
-        runNumber=${GITHUB_RUN_NUMBER:-0}
-        version="$date+$runNumber"
-        echo "VERSION=$version" >> $GITHUB_OUTPUT
-        echo "TAG=v$version" >> $GITHUB_OUTPUT
+        $date = Get-Date -Format "yy.M.d"
+        $runNumber = if ($env:GITHUB_RUN_NUMBER) { $env:GITHUB_RUN_NUMBER } else { "0" }
+        $version = "$date+$runNumber"
+        echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+        echo "TAG=v$version" >> $env:GITHUB_OUTPUT
         echo "Generated version: $version"
 
     - name: Inject version
       run: |
-        echo "${{ steps.version.outputs.VERSION }}" > version.txt
-
-        
-    - name: Package archive
+        echo "${{ steps.version.outputs.VERSION }}" | Out-File -FilePath version.txt -NoNewline -Encoding utf8
+    
+    - name: Prepare staging directory
       run: |
-        cat manifest.txt | xargs zip "skHost-${{ steps.version.outputs.VERSION }}.zip"
-
-    - name: Upload ZIP artifact
+        # Create staging directory
+        New-Item -Path "staging" -ItemType Directory -Force | Out-Null
+        
+        # Copy only files listed in manifest.txt to staging directory
+        Get-Content manifest.txt | Where-Object { $_.Trim() -and -not $_.StartsWith('#') } | ForEach-Object {
+          $file = $_.Trim()
+          $source = Join-Path "." $file
+          $dest = Join-Path "staging" $file
+          
+          if (Test-Path $source) {
+            # Create destination directory if needed
+            $destDir = Split-Path $dest -Parent
+            if ($destDir -and -not (Test-Path $destDir)) {
+              New-Item -Path $destDir -ItemType Directory -Force | Out-Null
+            }
+            Copy-Item -Path $source -Destination $dest -Force
+            Write-Host "✓ Staged: $file"
+          } else {
+            Write-Warning "File not found: $file"
+          }
+        }
+        
+        Write-Host "`nStaging directory prepared with manifest files"
+    
+    - name: Package ZIP archive
+      run: |
+        $version = "${{ steps.version.outputs.VERSION }}"
+        Compress-Archive -Path "staging\*" -DestinationPath "skHost-$version.zip" -Force
+        Write-Host "Created ZIP: skHost-$version.zip"
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+    
+    - name: Install WiX Toolset
+      run: |
+        dotnet tool install --global wix --version 4.0.5
+        wix --version
+    
+    - name: Build MSI
+      working-directory: wix
+      run: |
+        # Convert version format from YY.M.D+RUN to YY.M.D.RUN for MSI
+        $version = "${{ steps.version.outputs.VERSION }}"
+        $msiVersion = $version -replace '\+', '.'
+        Write-Host "Building MSI with version: $msiVersion"
+        
+        dotnet build -c Release -p:Version=$msiVersion
+    
+    - name: Rename MSI with version
+      run: |
+        $version = "${{ steps.version.outputs.VERSION }}"
+        $msiFile = Get-ChildItem -Path "wix\bin\Release" -Filter "*.msi" -Recurse | Select-Object -First 1
+        if ($msiFile) {
+          $newName = "skHost-$version.msi"
+          Move-Item -Path $msiFile.FullName -Destination $newName -Force
+          Write-Host "Renamed MSI to: $newName"
+        } else {
+          Write-Error "MSI file not found"
+          exit 1
+        }
+    
+    - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: skhost-zip
-        path: skHost-${{ steps.version.outputs.VERSION }}.zip
+        name: skhost-packages
+        path: |
+          skHost-${{ steps.version.outputs.VERSION }}.zip
+          skHost-${{ steps.version.outputs.VERSION }}.msi
         retention-days: 1
 
   create-release:
-    needs: build-zip
+    needs: build-packages
     runs-on: ubuntu-latest
 
     steps:
@@ -59,16 +122,29 @@ jobs:
     - name: Create GitHub release
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: ${{ needs.build-zip.outputs.tag }}
-        name: "skHost ${{ needs.build-zip.outputs.version }}"
+        tag_name: ${{ needs.build-packages.outputs.tag }}
+        name: "skHost ${{ needs.build-packages.outputs.version }}"
         body: |
           *Automated release built from commit ${{ github.sha }}*
           
           ## Downloads:
-          - `skHost-${{ needs.build-zip.outputs.version }}.zip` - Main application package.
+          - `skHost-${{ needs.build-packages.outputs.version }}.zip` - Portable ZIP archive with PowerShell installation script
+          - `skHost-${{ needs.build-packages.outputs.version }}.msi` - Windows Installer package
           
           ## Installation:
-          See README.md for installation and usage instructions.
+          
+          **MSI Installer (Recommended for personal systems):**
+          Download and run the `.msi` file. The installer provides:
+          - Automatic installation to `%LocalAppData%\SaltSpectre\skHost`
+          - Optional PATH registration for command-line access
+          - Optional auto-start at Windows logon
+          - Start Menu shortcuts
+          - Easy uninstallation via Windows Settings
+          
+          **ZIP Archive (Portable usage or PowerShell based installation):**
+          Extract the ZIP and run `skhost.ps1 -Install` or `skhost.ps1 -AutoStart` for manual installation.
+          
+          See README.md for detailed usage instructions.
 
         files: artifacts/**/*
         prerelease: false
