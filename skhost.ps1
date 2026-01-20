@@ -1,4 +1,4 @@
-<#
+﻿<#
 .PARAMETER Install
     Copies the script to %LocalAppData%\skHost.ps1 and creates a Start Menu shortcut.
     Does not automatically start the application after installation.
@@ -27,138 +27,22 @@ if ($Uninstall) { $Install = $false }
 
 $ParentPath = Split-Path ($MyInvocation.MyCommand.Path) -Parent
 
+# Dot source logging and icon handler functions
+. "$PSScriptRoot\log.ps1"
+. "$PSScriptRoot\icon_handler.ps1"
+
 Add-Type -AssemblyName System.Drawing, System.Windows.Forms
 
-Function Test-RegistryValue ($regkey, $name) {
-    if (Get-ItemProperty -Path $regkey -Name $name -ErrorAction Ignore) {
-        $true
-    }
-    else {
-        $false
-    }
-    # https://adamtheautomator.com/powershell-get-registry-value/
-}
-
-Function Find-IconFile {
-    param([string]$BasePath, [string]$IconName)
-    
-    foreach ($format in @('ico', 'png', 'bmp')) {
-        $iconPath = Join-Path $BasePath "$($IconName -replace '\.[^.]*$', '').$format"
-        if (Test-Path $iconPath) {
-            return $iconPath
-        }
-    }
-    return $null
-}
-
-Function New-IconFromFile {
-    param([string]$IconPath)
-    
-    if (-not (Test-Path $IconPath)) { return $null }
-    
-    $extension = [System.IO.Path]::GetExtension($IconPath).ToLower()
-    
-    switch ($extension) {
-        '.ico' { return [System.Drawing.Icon]::new($IconPath) }
-        { $_ -in '.png', '.bmp' } {
-            $bitmap = [System.Drawing.Bitmap]::new($IconPath)
-            $hIcon = $bitmap.GetHicon()
-            $icon = [System.Drawing.Icon]::FromHandle($hIcon)
-            $bitmap.Dispose()
-            return $icon
-        }
-        default {
-            Write-Warning "Unsupported icon format: $extension"
-            return $null
-        }
-    }
-}
-
-# Install logic. Does not start after install, even if autostart is specified.
-Function Install-skHost {
-    $InstallPath = "$env:LOCALAPPDATA\SaltSpectre\ps-skhost"
-    $ManifestPath = Join-Path $ParentPath "manifest.txt"
-    
-    # Create installation directory
-    if (-not (Test-Path $InstallPath)) {
-        New-Item -Path $InstallPath -ItemType Directory -Force | Out-Null
-    }
-    
-    # Copy files listed in manifest.txt
-    if (Test-Path $ManifestPath) {
-        $ManifestFiles = Get-Content $ManifestPath | Where-Object { $_.Trim() -and -not $_.StartsWith('#') }
-        foreach ($file in $ManifestFiles) {
-            $SourceFile = Join-Path $ParentPath $file.Trim()
-            $DestFile = Join-Path $InstallPath $file.Trim()
-            
-            if (Test-Path $SourceFile) {
-                # Create destination directory if needed
-                $DestDir = Split-Path $DestFile -Parent
-                if ($DestDir -and -not (Test-Path $DestDir)) {
-                    New-Item -Path $DestDir -ItemType Directory -Force | Out-Null
-                }
-                Copy-Item -Path $SourceFile -Destination $DestFile -Force -Confirm:$false
-                Write-Host "Copied: $file" -ForegroundColor Green
-            } else {
-                Write-Error "File not found: $file"
-                return
-            }
-        }
-    } else {
-        Write-Error "manifest.txt not found. Installation cannot proceed without manifest file."
-        return
-    }
-    
-    if ($AutoStart) {
-        if (Test-RegistryValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" "skHost") {
-            Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "skHost" -Force -Confirm:$false
-        }
-        # Specify to use conhost in case Windows Terminal is set as default as it does not support WindowStyle Hidden like conhost
-        New-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "skHost" -PropertyType String -Value "conhost powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstallPath\skhost.ps1`"" -Force -Confirm:$false
-    }
-
-    # Create Start Menu Shortcut
-    $WScript = New-Object -ComObject ("WScript.Shell")
-    $Shortcut = $Wscript.CreateShortcut("$env:APPDATA\Microsoft\Windows\Start Menu\skHost.lnk")
-    $Shortcut.TargetPath = "$env:SystemRoot\System32\Conhost.exe" 
-    $Shortcut.Arguments = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$InstallPath\skhost.ps1`""
-    
-    # Set shortcut icon
-    $installedIcon = Find-IconFile -BasePath $InstallPath -IconName "skHost"
-    if ($installedIcon) {
-        $Shortcut.IconLocation = $installedIcon
-    }
-    else {
-        $Shortcut.IconLocation = "$env:SystemRoot\system32\shell32.dll,43"
-    }
-    $Shortcut.Save()
-}
-
 if ($Install) {
-    Install-skHost
+    . "$PSScriptRoot\app_handler.ps1"
+    Install-skHost -ParentPath $ParentPath -AutoStart $AutoStart
     Break
 }
 
 # Uninstall logic. Does not stop currently running script.
 if ($Uninstall) {
-    # Remove new installation directory structure
-    $NewInstallPath = "$env:LOCALAPPDATA\SaltSpectre\ps-skhost"
-    if (Test-Path $NewInstallPath) {
-        Remove-Item -Path $NewInstallPath -Recurse -Force -Confirm:$false -ErrorAction SilentlyContinue
-        Write-Host "Removed: $NewInstallPath" -ForegroundColor Green
-    }
-    
-    # Clean up old installation files (backward compatibility)
-    Remove-Item -Path "$env:LOCALAPPDATA\skHost.ps1" -Force -Confirm:$false -ErrorAction SilentlyContinue
-    foreach ($format in @('ico', 'png', 'bmp')) {
-        Remove-Item -Path "$env:LOCALAPPDATA\skHost.$format" -Force -Confirm:$false -ErrorAction SilentlyContinue
-    }
-    
-    # Remove shared components
-    Remove-Item -Path "$env:APPDATA\Microsoft\Windows\Start Menu\skHost.lnk" -Force -Confirm:$false -ErrorAction SilentlyContinue
-    Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "skHost" -Force -Confirm:$false -ErrorAction SilentlyContinue
-    
-    Write-Host "Uninstall completed." -ForegroundColor Green
+    . "$PSScriptRoot\app_handler.ps1"
+    Uninstall-skHost
     Break
 }
 
@@ -171,9 +55,17 @@ $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
 $notifyIcon.Text = "skHost ($(Get-Content "$PSScriptRoot\version.txt" -TotalCount 1))"
 $notifyIcon.Icon = $SysTrayIconImage
 $notifyIcon.ContextMenu = New-Object System.Windows.Forms.ContextMenu
-$menuItem = New-Object System.Windows.Forms.MenuItem
-$menuItem.Text = "Exit"
-$menuItem.add_click({
+$notifyIcon.add_DoubleClick({
+    Toggle-LogViewer
+})
+$menuItem_OpenLog = New-Object System.Windows.Forms.MenuItem
+$menuItem_OpenLog.Text = "Log Viewer"
+$menuItem_OpenLog.add_click({
+        Toggle-LogViewer
+    })
+$menuItem_Exit = New-Object System.Windows.Forms.MenuItem
+$menuItem_Exit.Text = "Exit"
+$menuItem_Exit.add_click({
         # Exit logic
         $skTimer.Stop()
         $skTimer.Dispose()
@@ -182,7 +74,7 @@ $menuItem.add_click({
         Start-Sleep 1
         [System.Windows.Forms.Application]::Exit()
     })
-$notifyIcon.ContextMenu.MenuItems.AddRange($menuItem)
+$notifyIcon.ContextMenu.MenuItems.AddRange(@($menuItem_OpenLog, $menuItem_Exit))
 $notifyIcon.Visible = $true
 
 #region CoreLogic and Helper Functions
@@ -204,7 +96,7 @@ if ($Config.skHostKeystroke -and $Config.skHostKeystroke.Trim() -ne "") {
 Try {
     [System.Windows.Forms.SendKeys]::SendWait($skHostKeystroke)
 } Catch {
-    Write-Warning "Invalid or unconfigured keystroke format in config.json. Defaulting to Ctrl+Shift+F15."
+    Write-skSessionLog -Message "Invalid keystroke format in config.json. Defaulting to Ctrl+Shift+F15." -Type "WARNING" -Color Yellow
     $skHostKeystroke = "^+{F15}"
 }
 
@@ -212,7 +104,7 @@ Try {
 if ($Config.loopIntervalSeconds -and $Config.loopIntervalSeconds -is [int] -and $Config.loopIntervalSeconds -gt 0) {
     $skHostInterval = $Config.loopIntervalSeconds * 1000  # Convert to milliseconds
 } else {
-    Write-Warning "Invalid or unconfigured loop interval format in config.json. Defaulting to 4 minutes."
+    Write-skSessionLog -Message "Invalid loop interval in config.json. Defaulting to 4 minutes." -Type "WARNING" -Color Yellow
     $skHostInterval = 240000  # Default to 4 minutes
 }
 
@@ -268,60 +160,58 @@ $RdpWindowClasses = @(
 )
 
 Function Invoke-skLogic {
-    Write-Host "`nDEBUG: Entering main loop at $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")" -ForegroundColor Cyan
+    Write-skSessionLog -Message "========== Main Loop Started ==========" -Type "INFO" -Color Cyan
 
     # Create temporary window ("skSink"), activate it, send keystroke via SendKeys, then destroy it
-    Write-Host "DEBUG: Creating temporary window for keystroke activity" -ForegroundColor Yellow
+    Write-skSessionLog -Message "🪄 Creating temporary skSink window for keystroke activity" -Type "DEBUG" -Color Yellow
     $hInstance = [User32]::GetModuleHandle($null)
     $skSink = [User32]::CreateWindowEx(0, "Static", "", 0x10000000, -10000, -10000, 1, 1, [IntPtr]::Zero, [IntPtr]::Zero, $hInstance, [IntPtr]::Zero)
     
     if ($skSink -ne [IntPtr]::Zero) {
-        Write-Host "DEBUG: Temporary window created with handle: $skSink" -ForegroundColor Green
+        Write-skSessionLog -Message "✔️ Temporary skSink window created successfully [Handle: $skSink]" -Type "SUCCESS" -Color Green
         
         # Activate the temporary window
         [User32]::SetForegroundWindow($skSink) | Out-Null
-        Write-Host "DEBUG: skSink temporary window activated" -ForegroundColor Green
+        Write-skSessionLog -Message "✔️ Temporary skSink window activated" -Type "SUCCESS" -Color Green
         
         # Send keystroke using SendKeys (goes to active window)
         [System.Windows.Forms.SendKeys]::SendWait("$skHostKeystroke")
-        Write-Host "DEBUG: Sent keystroke to skSink: $skHostKeystroke" -ForegroundColor Green
+        Write-skSessionLog -Message "✔️ Keystroke sent to skSink: $skHostKeystroke" -Type "SUCCESS" -Color Green
         
         # Destroy the temporary window
         [User32]::DestroyWindow($skSink) | Out-Null
-        Write-Host "DEBUG: skSink temporary window destroyed" -ForegroundColor Green
+        Write-skSessionLog -Message "✔️ Temporary skSink window destroyed" -Type "SUCCESS" -Color Green
     } else {
-        Write-Host "DEBUG: Failed to create skSink temporary window" -ForegroundColor Red
+        Write-skSessionLog -Message "❌ Failed to create temporary skSink window" -Type "ERROR" -Color Red
     }
 
-    Write-Host "DEBUG: Searching for RDP, RemoteApp, and Hyper-V windows across all desktops." -ForegroundColor Yellow
+    Write-skSessionLog -Message "🔍 Searching for RDP, RemoteApp, and Hyper-V windows across all desktops." -Type "DEBUG" -Color Yellow
     $ActiveRdpWindows = Get-WindowsByClass -ClassName $RdpWindowClasses
     if ($ActiveRdpWindows -ne $null) {
-        Write-Host "DEBUG: Active sessions found. Caching foreground window information:" -ForegroundColor Magenta
+        Write-skSessionLog -Message "✔️ Found $($ActiveRdpWindows.Count) active session(s). Caching current foreground window..." -Type "INFO" -Color Magenta
         $ForegroundWindowHandle = [User32]::GetForegroundWindow()
         $ForegroundWindow = Get-WindowInformation -Handle $ForegroundWindowHandle
-        Write-Host "DEBUG: [$ForegroundWindowHandle]: $($ForegroundWindow.Class) - $($ForegroundWindow.Title)" -ForegroundColor Magenta
+        Write-skSessionLog -Message "🎯 Current foreground: [$ForegroundWindowHandle] $($ForegroundWindow.Class) - '$($ForegroundWindow.Title)'" -Type "DEBUG" -Color Magenta
 
         foreach ($RdpWindow in $ActiveRdpWindows) {
             $WindowHandle = $RdpWindow.Handle
-            Write-Host "DEBUG: [$WindowHandle] Found: $($RdpWindow.Class) - $($RdpWindow.Title)" -ForegroundColor Yellow
+            Write-skSessionLog -Message "⌛ Processing session: [$WindowHandle] $($RdpWindow.Class) - '$($RdpWindow.Title)'" -Type "DEBUG" -Color Yellow
             if ($RdpWindow.Class -like "*RAIL*" -and -not ($RemoteAppWhiteList | Where-Object { $RdpWindow.Title -like "*$_*" })) {
-                Write-Host "DEBUG: RemoteApp not in the whitelist. Ignoring." -ForegroundColor DarkGray
+                Write-skSessionLog -Message "⏭️ Skipping: RemoteApp not in whitelist" -Type "DEBUG" -Color DarkGray
             }
             else {
                 [User32]::SetForegroundWindow($WindowHandle) | Out-Null
-                Write-Host "DEBUG: [$WindowHandle] Activated window in foreground." -ForegroundColor Yellow
+                Write-skSessionLog -Message "🪄 Activated window in foreground: [$WindowHandle] '$($RdpWindow.Title)'" -Type "DEBUG" -Color Yellow
                 Move-MouseCursor
-                Write-Host "DEBUG: [$WindowHandle] Sent simulated mouse input." -ForegroundColor Green
+                Write-skSessionLog -Message "⌨️ Sent simulated mouse input to window: [$WindowHandle] '$($RdpWindow.Title)'" -Type "SUCCESS" -Color Green
             }
         }
-        Write-Host "DEBUG: [$ForegroundWindowHandle] Restoring foreground window: $($ForegroundWindow.Class) - $($ForegroundWindow.Title)" -ForegroundColor Magenta
+        Write-skSessionLog -Message "🔄 Restoring original foreground window: [$ForegroundWindowHandle] '$($ForegroundWindow.Title)'" -Type "INFO" -Color Magenta
         [User32]::SetForegroundWindow($ForegroundWindowHandle) | Out-Null
-
+    } else {
+        Write-skSessionLog -Message "✔️ No matching windows found--nothing to do." -Type "DEBUG" -Color Yellow
     }
-    else {
-        Write-Host "DEBUG: No matching windows found--nothing to do." -ForegroundColor Yellow
-    }
-    Write-Host "DEBUG: Main loop completed at $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")" -ForegroundColor Cyan
+    Write-skSessionLog -Message "========== Main Loop Completed ==========" -Type "INFO" -Color Cyan
 }
 
 # Create a Windows Forms Timer for the main logic

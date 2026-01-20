@@ -5,3 +5,6 @@ skhost.ico
 user32.cs
 manifest.txt
 version.txt
+log.ps1
+app_handler.ps1
+icon_handler.ps1
