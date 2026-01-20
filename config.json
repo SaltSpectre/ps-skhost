@@ -1,8 +1,8 @@
-{
+﻿{
     "remoteAppWhitelist": [
         "Teams",
         "skRAHelper"
     ],
-    "skHostKeystroke": "^+{F15}",
+    "skHostKeystroke": "{F15}",
     "loopIntervalSeconds": 240
 }
