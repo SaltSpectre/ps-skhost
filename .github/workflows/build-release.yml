@@ -1,0 +1,78 @@
+
+name: Package and Release
+
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-zip:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.VERSION }}
+      tag: ${{ steps.version.outputs.TAG }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Generate version
+      id: version
+      run: |
+        date=$(date '+%y.%-m.%-d')
+        runNumber=${GITHUB_RUN_NUMBER:-0}
+        version="$date+$runNumber"
+        echo "VERSION=$version" >> $GITHUB_OUTPUT
+        echo "TAG=v$version" >> $GITHUB_OUTPUT
+        echo "Generated version: $version"
+
+    - name: Inject version
+      run: |
+        echo "${{ steps.version.outputs.VERSION }}" > version.txt
+
+        
+    - name: Package archive
+      run: |
+        zip "skHost-${{ steps.version.outputs.VERSION }}.zip" $(cat manifest.txt)
+
+    - name: Upload ZIP artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: skhost-zip
+        path: skHost-${{ steps.version.outputs.VERSION }}.zip
+        retention-days: 1
+
+  create-release:
+    needs: build-zip
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Create GitHub release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ needs.build-zip.outputs.tag }}
+        name: "skHost ${{ needs.build-zip.outputs.version }}"
+        body: |
+          **skHost ${{ needs.build-zip.outputs.version }}**
+          
+          Automated release built from commit ${{ github.sha }}
+          
+          **Downloads:**
+          - `skHost-${{ needs.build-zip.outputs.version }}.zip` - Main application package.
+          
+          See README.md for installation and usage instructions.
+          
+        files: artifacts/**/*
+        prerelease: false
+        draft: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
