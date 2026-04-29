@@ -150,13 +150,95 @@ Function Get-WindowsByClass {
     return $EnumeratedWindows
 }
 
-# Things get weird if every window in a RemoteApp session is called to the foreground. Define specific windows.
-$RemoteAppWhiteList = $Config.remoteAppWhitelist
+Function Get-ChildWindows {
+    [CmdletBinding()]
+    param ( [Parameter(Mandatory = $true)] [IntPtr] $ParentHandle )
+
+    $EnumeratedWindows = New-Object System.Collections.ArrayList
+    $enumWindows = {
+        param($hWnd, $lParam)
+        $windowInfo = Get-WindowInformation -Handle $hWnd
+        $EnumeratedWindows.Add($windowInfo) | Out-Null
+        return $true
+    }
+    [User32]::EnumChildWindows($ParentHandle, $enumWindows, [IntPtr]::Zero) | Out-Null
+    return $EnumeratedWindows
+}
+
+Function New-MousePointLParam {
+    param (
+        [Parameter(Mandatory = $true)] [int] $X,
+        [Parameter(Mandatory = $true)] [int] $Y
+    )
+
+    return [IntPtr](($Y -shl 16) -bor ($X -band 0xFFFF))
+}
+
+Function Send-BackgroundMouseMove {
+    param (
+        [Parameter(Mandatory = $true)] $Handle,
+        [Parameter(Mandatory = $true)] [int] $X,
+        [Parameter(Mandatory = $true)] [int] $Y
+    )
+
+    [User32]::PostMessage($Handle, 0x0200, [IntPtr]::Zero, (New-MousePointLParam -X $X -Y $Y)) | Out-Null
+}
+
+Function Send-BackgroundMouseJiggle {
+    param ( [Parameter(Mandatory = $true)] $Handle )
+
+    Send-BackgroundMouseMove -Handle $Handle -X 10 -Y 10
+    Start-Sleep -Milliseconds 100
+    Send-BackgroundMouseMove -Handle $Handle -X 11 -Y 10
+    Start-Sleep -Milliseconds 100
+    Send-BackgroundMouseMove -Handle $Handle -X 10 -Y 10
+}
+
+Function Test-WindowIsForegroundRoot {
+    param (
+        [Parameter(Mandatory = $true)] $WindowHandle,
+        [Parameter(Mandatory = $true)] $ForegroundWindowHandle
+    )
+
+    $ForegroundRoot = [User32]::GetAncestor($ForegroundWindowHandle, 2)
+    return $ForegroundRoot -eq $WindowHandle
+}
+
+Function Invoke-BackgroundSessionMouseInput {
+    param ( [Parameter(Mandatory = $true)] $Window )
+
+    if ($Window.Class -eq "TscShellContainerClass") {
+        Send-BackgroundMouseJiggle -Handle $Window.Handle
+        $ChildWindows = Get-ChildWindows -ParentHandle $Window.Handle
+        $InputWindows = @($ChildWindows | Where-Object { $_.Class.Trim() -eq "IHWindowClass_rdclientax" })
+
+        if ($InputWindows -and $InputWindows.Count -gt 0) {
+            foreach ($InputWindow in $InputWindows) {
+                Send-BackgroundMouseJiggle -Handle $InputWindow.Handle
+            }
+            Write-skSessionLog -Message "✔️ Sent background mouse input to RDP top-level and $($InputWindows.Count) child input target(s): [$($Window.Handle)] '$($Window.Title)'" -Type "SUCCESS" -Color Green
+        }
+        else {
+            $ChildClasses = ($ChildWindows | Select-Object -ExpandProperty Class -Unique) -join ", "
+            Write-skSessionLog -Message "⚠️ Sent background mouse input to RDP top-level only; no child input target found: [$($Window.Handle)] '$($Window.Title)'. Child classes: $ChildClasses" -Type "WARNING" -Color Yellow
+        }
+
+        return $true
+    }
+
+    if ($Window.Class -eq "RAIL_WINDOW") {
+        Send-BackgroundMouseJiggle -Handle $Window.Handle
+        Write-skSessionLog -Message "✔️ Sent background mouse input to RemoteApp window: [$($Window.Handle)] '$($Window.Title)'" -Type "SUCCESS" -Color Green
+        return $true
+    }
+
+    return $false
+}
 
 $RdpWindowClasses = @(
     "TscShellContainerClass", # MSTSC/MSRDC
-    "RAIL_WINDOW", # RemoteApp
-    "WindowsForms10.Window.8.app.0.aa0c13_r6_ad1" #Hyper-V Console
+    "RAIL_WINDOW" # RemoteApp
+    # "WindowsForms10.Window.8.app.0.aa0c13_r6_ad1" # Hyper-V Console
 )
 
 Function Invoke-skLogic {
@@ -185,10 +267,10 @@ Function Invoke-skLogic {
         Write-skSessionLog -Message "❌ Failed to create temporary skSink window" -Type "ERROR" -Color Red
     }
 
-    Write-skSessionLog -Message "🔍 Searching for RDP, RemoteApp, and Hyper-V windows across all desktops." -Type "DEBUG" -Color Yellow
+    Write-skSessionLog -Message "🔍 Searching for RDP and RemoteApp windows across all desktops." -Type "DEBUG" -Color Yellow
     $ActiveRdpWindows = Get-WindowsByClass -ClassName $RdpWindowClasses
-    if ($ActiveRdpWindows -ne $null) {
-        Write-skSessionLog -Message "✔️ Found $($ActiveRdpWindows.Count) active session(s). Caching current foreground window..." -Type "INFO" -Color Magenta
+    if ($ActiveRdpWindows -and $ActiveRdpWindows.Count -gt 0) {
+        Write-skSessionLog -Message "✔️ Found $($ActiveRdpWindows.Count) active session(s). Checking foreground window..." -Type "INFO" -Color Magenta
         $ForegroundWindowHandle = [User32]::GetForegroundWindow()
         $ForegroundWindow = Get-WindowInformation -Handle $ForegroundWindowHandle
         Write-skSessionLog -Message "🎯 Current foreground: [$ForegroundWindowHandle] $($ForegroundWindow.Class) - '$($ForegroundWindow.Title)'" -Type "DEBUG" -Color Magenta
@@ -196,18 +278,21 @@ Function Invoke-skLogic {
         foreach ($RdpWindow in $ActiveRdpWindows) {
             $WindowHandle = $RdpWindow.Handle
             Write-skSessionLog -Message "⌛ Processing session: [$WindowHandle] $($RdpWindow.Class) - '$($RdpWindow.Title)'" -Type "DEBUG" -Color Yellow
-            if ($RdpWindow.Class -like "*RAIL*" -and -not ($RemoteAppWhiteList | Where-Object { $RdpWindow.Title -like "*$_*" })) {
-                Write-skSessionLog -Message "⏭️ Skipping: RemoteApp not in whitelist" -Type "DEBUG" -Color DarkGray
+
+            if ([User32]::IsIconic($WindowHandle)) {
+                Write-skSessionLog -Message "⏭️ Skipping minimized session: [$WindowHandle] '$($RdpWindow.Title)'" -Type "DEBUG" -Color DarkGray
+            }
+            elseif (Test-WindowIsForegroundRoot -WindowHandle $WindowHandle -ForegroundWindowHandle $ForegroundWindowHandle) {
+                Move-MouseCursor
+                Write-skSessionLog -Message "✔️ Sent foreground mouse input to active session: [$WindowHandle] '$($RdpWindow.Title)'" -Type "SUCCESS" -Color Green
             }
             else {
-                [User32]::SetForegroundWindow($WindowHandle) | Out-Null
-                Write-skSessionLog -Message "🪄 Activated window in foreground: [$WindowHandle] '$($RdpWindow.Title)'" -Type "DEBUG" -Color Yellow
-                Move-MouseCursor
-                Write-skSessionLog -Message "⌨️ Sent simulated mouse input to window: [$WindowHandle] '$($RdpWindow.Title)'" -Type "SUCCESS" -Color Green
+                $backgroundInputSent = Invoke-BackgroundSessionMouseInput -Window $RdpWindow
+                if (-not $backgroundInputSent) {
+                    Write-skSessionLog -Message "⏭️ Skipping: no background input target found for [$WindowHandle] '$($RdpWindow.Title)'" -Type "WARNING" -Color Yellow
+                }
             }
         }
-        Write-skSessionLog -Message "🔄 Restoring original foreground window: [$ForegroundWindowHandle] '$($ForegroundWindow.Title)'" -Type "INFO" -Color Magenta
-        [User32]::SetForegroundWindow($ForegroundWindowHandle) | Out-Null
     } else {
         Write-skSessionLog -Message "✔️ No matching windows found--nothing to do." -Type "DEBUG" -Color Yellow
     }
