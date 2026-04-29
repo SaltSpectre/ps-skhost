@@ -1,11 +1,11 @@
-# skHost: An idle prevention tool for local, RDP, RemoteApp, and Hyper-V sessions written entirely in PowerShell for maximum portability.
+# skHost: An idle prevention tool for local, RDP, and RemoteApp sessions written entirely in PowerShell for maximum portability.
 
 ## Description
 skHost is a Windows tool that runs in the background to keep a system alive. It does this by simulating keyboard input (Default: F15) and mouse movement every 4 minutes (240 seconds). The mouse cursor does not visibly move but the input is registered by the system. *New: Simulated keyboard input is now sent to an ephemeral window ("skSink") to reduce interference with other applications, especially WSL & SSH sessions to Linux hosts.*
 
-In addition to keeping a physical machine session active, skHost will also bring forward all non-minimized RDP, (whitelisted) RemoteApp, and Hyper-V VM windows to simulate mouse movement at the same interval. This keeps these sessions from timing out. For RemoteApp windows, skHost uses a configurable whitelist to determine which windows to activate.
+In addition to keeping a physical machine session active, skHost will also send background mouse movement to non-minimized RDP and RemoteApp windows at the same interval. This keeps these sessions from timing out without bringing them to the foreground.
  
-skHost is designed to run on the **client side** and is **transparent to the RDP or Hyper-V session**, requiring no installation or configuration on the remote host.
+skHost is designed to run on the **client side** and is **transparent to the RDP session**, requiring no installation or configuration on the remote host.
 
 skHost runs in a background PowerShell process that exists in a hidden window. It creates a system tray icon that is used for a visual cue that the process is running and provides an interaction point in order to terminate the process without having to resort to the Task Manager. Ideally, skHost never gets in the way of your work and is never accidentally terminated when closing extraneous windows on your desktop.
 
@@ -78,7 +78,7 @@ This parameter will remove the shortcut and autostart entries as applicable and 
 ```
 
 ### Changing the keystroke
-By default it will use Ctrl+Shift+F15 as the keystroke that is sent to the system. I have experimented with several different keystrokes and found many to be problematic. It is impossible to identify a universally safe keystroke, so if you find this to be problematic, you can change the keystroke by modifying the `skHostKeystroke` variable in `config.json`. The script will validate the keystroke value and revert back to Ctrl+Shift+F15 if the configured value is invalid.
+By default it will use F15 as the keystroke that is sent to the system. I have experimented with several different keystrokes and found many to be problematic. It is impossible to identify a universally safe keystroke, so if you find this to be problematic, you can change the keystroke by modifying the `skHostKeystroke` variable in `config.json`. The script will validate the keystroke value and revert back to Ctrl+Shift+F15 if the configured value is invalid.
 
 For a list of all possible keystrokes, refer to the [SendKeys Class documentation on Microsoft Learn](https://learn.microsoft.com/en-us/dotnet/api/system.windows.forms.sendkeys).
 
@@ -89,23 +89,19 @@ By default the script will invoke the keep-alive logic every 240 seconds (4 minu
 
 skHost requires the following files to operate properly:
 - `skhost.ps1` - The main script
-- `config.json` - Contains the RemoteApp whitelist configuration
+- `config.json` - Contains runtime configuration
 - `user32.cs` - C# definitions for Windows API functions
 - `mouse.cs` - C# definitions for mouse movement simulation
 - `manifest.txt` - List of files to be included in installation
 - `version.txt` - Used for the versioning string for the systray icon tooltip
-
-#### RemoteApp Whitelist
-By default, skHost will not activate every RemoteApp window to prevent interference with specific applications. You can modify the whitelist in `config.json` to include the RemoteApp windows you want to keep active. `skRAHelper` is included in the default configuration and is reserved for future use.
 
 #### Custom Icon
 A custom icon file can be included in the same directory as the script to display in the system tray. The icon must be in `.ico` format.
 
 ### Known Issues
 - This script will not work with [Constrained Language Mode](https://devblogs.microsoft.com/powershell/powershell-constrained-language-mode/). CLM and this script are wholly incompatible, and there are no plans to support it in the future.
-- When using this script to keep an RDP, RemoteApp window, and/or Hyper-V session active, the window ***cannot be minimized***. It does not have to be the focused window as the script will grab focus momentarily, but it will not restore a remote session window for focus. If minimizing the window is something you feel is a must, consider using a virtual desktop (`Win + Tab`, not a VM) instead. When windows are running on a separate virtual desktop, the logic still works, but the window will not flash or take up space on the current desktop.
-- For RDP, RemoteApp, and Hyper-V, the script **MUST** be running on the host (aka your computer). The session will not remain active if the script is running in the remote session.
-- RDP, RemoteApp, and Hyper-V windows will flash when focus is grabbed, however this will be a momentary disruption.
+- When using this script to keep an RDP or RemoteApp window active, the window ***cannot be minimized***. It does not have to be the focused window. It can be on a separate virtual desktop if visibility is not desired.
+- For RDP and RemoteApp, the script **MUST** be running on the host (e.g. your computer). The session will not remain active if the script is running in the remote session.
 
 ---
 
