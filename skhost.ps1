@@ -209,7 +209,7 @@ Function Invoke-BackgroundSessionMouseInput {
 
     if ($Window.Class -eq "TscShellContainerClass") {
         Send-BackgroundMouseJiggle -Handle $Window.Handle
-        $ChildWindows = Get-ChildWindows -ParentHandle $Window.Handle
+        $ChildWindows = @(Get-ChildWindows -ParentHandle $Window.Handle)
         $InputWindows = @($ChildWindows | Where-Object { $_.Class.Trim() -eq "IHWindowClass_rdclientax" })
 
         if ($InputWindows -and $InputWindows.Count -gt 0) {
@@ -268,7 +268,7 @@ Function Invoke-skLogic {
     }
 
     Write-skSessionLog -Message "🔍 Searching for RDP and RemoteApp windows across all desktops." -Type "DEBUG" -Color Yellow
-    $ActiveRdpWindows = Get-WindowsByClass -ClassName $RdpWindowClasses
+    $ActiveRdpWindows = @(Get-WindowsByClass -ClassName $RdpWindowClasses)
     if ($ActiveRdpWindows -and $ActiveRdpWindows.Count -gt 0) {
         Write-skSessionLog -Message "✔️ Found $($ActiveRdpWindows.Count) active session(s). Checking foreground window..." -Type "INFO" -Color Magenta
         $ForegroundWindowHandle = [User32]::GetForegroundWindow()
