@@ -85,6 +85,9 @@ For a list of all possible keystrokes, refer to the [SendKeys Class documentatio
 ### Changing the execution interval
 By default the script will invoke the keep-alive logic every 240 seconds (4 minutes). This can be configured in `config.json` via the `loopIntervalSeconds` property. The value must be in seconds and must be a positive integer value. The script will validate the value and revert back to 240 seconds if the configured value is invalid.
 
+### Enabling or disabling activity types
+The system tray menu includes toggles for local activity and RDP/RemoteApp activity. These settings are saved in `config.json` via the `localEnabled` and `rdpEnabled` properties. Local activity controls the skSink keystroke sent to the host, while RDP activity controls background mouse movement for RDP and RemoteApp windows.
+
 ### Required Files and Configuration
 
 skHost requires the following files to operate properly:
