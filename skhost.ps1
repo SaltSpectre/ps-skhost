@@ -46,6 +46,11 @@ if ($Uninstall) {
     Break
 }
 
+$ConfigPath = Join-Path $PSScriptRoot "config.json"
+$Config = Get-Content $ConfigPath | ConvertFrom-Json
+$script:localEnabled = if ($null -ne $Config.localEnabled) { [bool]$Config.localEnabled } else { $true }
+$script:rdpEnabled = if ($null -ne $Config.rdpEnabled) { [bool]$Config.rdpEnabled } else { $true }
+
 # Create system tray icon
 $iconFile = Find-IconFile -BasePath $PSScriptRoot -IconName "skHost"
 $SysTrayIconImage = New-IconFromFile -IconPath $iconFile
@@ -58,6 +63,24 @@ $notifyIcon.ContextMenu = New-Object System.Windows.Forms.ContextMenu
 $notifyIcon.add_DoubleClick({
     Toggle-LogViewer
 })
+$menuItem_Local = New-Object System.Windows.Forms.MenuItem
+$menuItem_Local.add_click({
+        $script:localEnabled = -not $script:localEnabled
+        Save-skConfig
+        Update-skMenuLabels
+        Write-skSessionLog -Message "✔️ Local activity $($(if ($script:localEnabled) { 'enabled 🟢' } else { 'disabled 🔴' }))" -Type "SUCCESS" -Color Green
+        Write-skSessionLog -Message "Executing one-time main logic to reflect local activity change across all sessions..." -Type "INFO" -Color Cyan
+        Invoke-skLogic
+    })
+$menuItem_Rdp = New-Object System.Windows.Forms.MenuItem
+$menuItem_Rdp.add_click({
+        $script:rdpEnabled = -not $script:rdpEnabled
+        Save-skConfig
+        Update-skMenuLabels
+        Write-skSessionLog -Message "✔️ RDP activity $($(if ($script:rdpEnabled) { 'enabled 🟢' } else { 'disabled 🔴' }))" -Type "SUCCESS" -Color Green
+        Write-skSessionLog -Message "Executing one-time main logic to reflect RDP activity change across all sessions..." -Type "INFO" -Color Cyan
+        Invoke-skLogic
+    })
 $menuItem_OpenLog = New-Object System.Windows.Forms.MenuItem
 $menuItem_OpenLog.Text = "Log Viewer"
 $menuItem_OpenLog.add_click({
@@ -74,16 +97,18 @@ $menuItem_Exit.add_click({
         Start-Sleep 1
         [System.Windows.Forms.Application]::Exit()
     })
-$notifyIcon.ContextMenu.MenuItems.AddRange(@($menuItem_OpenLog, $menuItem_Exit))
+$notifyIcon.ContextMenu.MenuItems.AddRange(@(
+        $menuItem_Local, 
+        $menuItem_Rdp, 
+        $menuItem_OpenLog, 
+        $menuItem_Exit
+    ))
 $notifyIcon.Visible = $true
 
 #region CoreLogic and Helper Functions
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -TypeDefinition $(Get-Content "$PSScriptRoot\user32.cs" -Raw)
 Add-Type -TypeDefinition $(Get-Content "$PSScriptRoot\mouse.cs" -Raw)
-
-# Load configuration file
-$Config = Get-Content "$PSScriptRoot\config.json" | ConvertFrom-Json
 
 # Read keystroke from config file or default to Ctrl+Shift+F15
 if ($Config.skHostKeystroke -and $Config.skHostKeystroke.Trim() -ne "") {
@@ -109,7 +134,25 @@ if ($Config.loopIntervalSeconds -and $Config.loopIntervalSeconds -is [int] -and 
 }
 
 # Update the tooltip to show the configured keystroke and interval
-$notifyIcon.Text = "skHost ($(Get-Content "$PSScriptRoot\version.txt" -TotalCount 1))`nKeystroke: $skHostKeystroke`nInterval: $($skHostInterval / 1000) seconds"
+Function Save-skConfig {
+    $configOutput = [ordered]@{
+        skHostKeystroke     = if ($Config.skHostKeystroke) { $Config.skHostKeystroke } else { $skHostKeystroke }
+        loopIntervalSeconds = if ($Config.loopIntervalSeconds) { $Config.loopIntervalSeconds } else { [int]($skHostInterval / 1000) }
+        localEnabled        = $script:localEnabled
+        rdpEnabled          = $script:rdpEnabled
+    }
+
+    $configOutput | ConvertTo-Json | Set-Content -Path $ConfigPath -Encoding utf8
+    $script:Config = Get-Content $ConfigPath | ConvertFrom-Json
+}
+
+Function Update-skMenuLabels {
+    $menuItem_Local.Text = if ($script:localEnabled) { "Disable Local" } else { "Enable Local" }
+    $menuItem_Rdp.Text = if ($script:rdpEnabled) { "Disable RDP" } else { "Enable RDP" }
+    $notifyIcon.Text = "skHost ($(Get-Content "$PSScriptRoot\version.txt" -TotalCount 1))`nKeystroke: $skHostKeystroke`nInterval: $($skHostInterval / 1000) seconds"
+}
+
+Update-skMenuLabels
 
 Function Move-MouseCursor {
     [Mouse]::MoveMouse()
@@ -244,57 +287,65 @@ $RdpWindowClasses = @(
 Function Invoke-skLogic {
     Write-skSessionLog -Message "========== Main Loop Started ==========" -Type "INFO" -Color Cyan
 
-    # Create temporary window ("skSink"), activate it, send keystroke via SendKeys, then destroy it
-    Write-skSessionLog -Message "🪄 Creating temporary skSink window for keystroke activity" -Type "DEBUG" -Color Yellow
-    $hInstance = [User32]::GetModuleHandle($null)
-    $skSink = [User32]::CreateWindowEx(0, "Static", "", 0x10000000, -10000, -10000, 1, 1, [IntPtr]::Zero, [IntPtr]::Zero, $hInstance, [IntPtr]::Zero)
-    
-    if ($skSink -ne [IntPtr]::Zero) {
-        Write-skSessionLog -Message "✔️ Temporary skSink window created successfully [Handle: $skSink]" -Type "SUCCESS" -Color Green
+    if ($script:localEnabled) {
+        # Create temporary window ("skSink"), activate it, send keystroke via SendKeys, then destroy it
+        Write-skSessionLog -Message "🪄 Creating temporary skSink window for keystroke activity" -Type "DEBUG" -Color Yellow
+        $hInstance = [User32]::GetModuleHandle($null)
+        $skSink = [User32]::CreateWindowEx(0, "Static", "", 0x10000000, -10000, -10000, 1, 1, [IntPtr]::Zero, [IntPtr]::Zero, $hInstance, [IntPtr]::Zero)
         
-        # Activate the temporary window
-        [User32]::SetForegroundWindow($skSink) | Out-Null
-        Write-skSessionLog -Message "✔️ Temporary skSink window activated" -Type "SUCCESS" -Color Green
-        
-        # Send keystroke using SendKeys (goes to active window)
-        [System.Windows.Forms.SendKeys]::SendWait("$skHostKeystroke")
-        Write-skSessionLog -Message "✔️ Keystroke sent to skSink: $skHostKeystroke" -Type "SUCCESS" -Color Green
-        
-        # Destroy the temporary window
-        [User32]::DestroyWindow($skSink) | Out-Null
-        Write-skSessionLog -Message "✔️ Temporary skSink window destroyed" -Type "SUCCESS" -Color Green
-    } else {
-        Write-skSessionLog -Message "❌ Failed to create temporary skSink window" -Type "ERROR" -Color Red
-    }
-
-    Write-skSessionLog -Message "🔍 Searching for RDP and RemoteApp windows across all desktops." -Type "DEBUG" -Color Yellow
-    $ActiveRdpWindows = @(Get-WindowsByClass -ClassName $RdpWindowClasses)
-    if ($ActiveRdpWindows -and $ActiveRdpWindows.Count -gt 0) {
-        Write-skSessionLog -Message "✔️ Found $($ActiveRdpWindows.Count) active session(s). Checking foreground window..." -Type "INFO" -Color Magenta
-        $ForegroundWindowHandle = [User32]::GetForegroundWindow()
-        $ForegroundWindow = Get-WindowInformation -Handle $ForegroundWindowHandle
-        Write-skSessionLog -Message "🎯 Current foreground: [$ForegroundWindowHandle] $($ForegroundWindow.Class) - '$($ForegroundWindow.Title)'" -Type "DEBUG" -Color Magenta
-
-        foreach ($RdpWindow in $ActiveRdpWindows) {
-            $WindowHandle = $RdpWindow.Handle
-            Write-skSessionLog -Message "⌛ Processing session: [$WindowHandle] $($RdpWindow.Class) - '$($RdpWindow.Title)'" -Type "DEBUG" -Color Yellow
-
-            if ([User32]::IsIconic($WindowHandle)) {
-                Write-skSessionLog -Message "⏭️ Skipping minimized session: [$WindowHandle] '$($RdpWindow.Title)'" -Type "DEBUG" -Color DarkGray
-            }
-            elseif (Test-WindowIsForegroundRoot -WindowHandle $WindowHandle -ForegroundWindowHandle $ForegroundWindowHandle) {
-                Move-MouseCursor
-                Write-skSessionLog -Message "✔️ Sent foreground mouse input to active session: [$WindowHandle] '$($RdpWindow.Title)'" -Type "SUCCESS" -Color Green
-            }
-            else {
-                $backgroundInputSent = Invoke-BackgroundSessionMouseInput -Window $RdpWindow
-                if (-not $backgroundInputSent) {
-                    Write-skSessionLog -Message "⏭️ Skipping: no background input target found for [$WindowHandle] '$($RdpWindow.Title)'" -Type "WARNING" -Color Yellow
-                }
-            }
+        if ($skSink -ne [IntPtr]::Zero) {
+            Write-skSessionLog -Message "✔️ Temporary skSink window created successfully [Handle: $skSink]" -Type "SUCCESS" -Color Green
+            
+            # Activate the temporary window
+            [User32]::SetForegroundWindow($skSink) | Out-Null
+            Write-skSessionLog -Message "✔️ Temporary skSink window activated" -Type "SUCCESS" -Color Green
+            
+            # Send keystroke using SendKeys (goes to active window)
+            [System.Windows.Forms.SendKeys]::SendWait("$skHostKeystroke")
+            Write-skSessionLog -Message "✔️ Keystroke sent to skSink: $skHostKeystroke" -Type "SUCCESS" -Color Green
+            
+            # Destroy the temporary window
+            [User32]::DestroyWindow($skSink) | Out-Null
+            Write-skSessionLog -Message "✔️ Temporary skSink window destroyed" -Type "SUCCESS" -Color Green
+        } else {
+            Write-skSessionLog -Message "❌ Failed to create temporary skSink window" -Type "ERROR" -Color Red
         }
     } else {
-        Write-skSessionLog -Message "✔️ No matching windows found--nothing to do." -Type "DEBUG" -Color Yellow
+        Write-skSessionLog -Message "⏭️ Local activity disabled--skipping skSink keystroke." -Type "INFO" -Color Cyan
+    }
+
+    if ($script:rdpEnabled) {
+        Write-skSessionLog -Message "🔍 Searching for RDP and RemoteApp windows across all desktops." -Type "DEBUG" -Color Yellow
+        $ActiveRdpWindows = @(Get-WindowsByClass -ClassName $RdpWindowClasses)
+        if ($ActiveRdpWindows -and $ActiveRdpWindows.Count -gt 0) {
+            Write-skSessionLog -Message "✔️ Found $($ActiveRdpWindows.Count) active session(s). Checking foreground window..." -Type "INFO" -Color Magenta
+            $ForegroundWindowHandle = [User32]::GetForegroundWindow()
+            $ForegroundWindow = Get-WindowInformation -Handle $ForegroundWindowHandle
+            Write-skSessionLog -Message "🎯 Current foreground: [$ForegroundWindowHandle] $($ForegroundWindow.Class) - '$($ForegroundWindow.Title)'" -Type "DEBUG" -Color Magenta
+
+            foreach ($RdpWindow in $ActiveRdpWindows) {
+                $WindowHandle = $RdpWindow.Handle
+                Write-skSessionLog -Message "⌛ Processing session: [$WindowHandle] $($RdpWindow.Class) - '$($RdpWindow.Title)'" -Type "DEBUG" -Color Yellow
+
+                if ([User32]::IsIconic($WindowHandle)) {
+                    Write-skSessionLog -Message "⏭️ Skipping minimized session: [$WindowHandle] '$($RdpWindow.Title)'" -Type "DEBUG" -Color DarkGray
+                }
+                elseif (Test-WindowIsForegroundRoot -WindowHandle $WindowHandle -ForegroundWindowHandle $ForegroundWindowHandle) {
+                    Move-MouseCursor
+                    Write-skSessionLog -Message "✔️ Sent foreground mouse input to active session: [$WindowHandle] '$($RdpWindow.Title)'" -Type "SUCCESS" -Color Green
+                }
+                else {
+                    $backgroundInputSent = Invoke-BackgroundSessionMouseInput -Window $RdpWindow
+                    if (-not $backgroundInputSent) {
+                        Write-skSessionLog -Message "⏭️ Skipping: no background input target found for [$WindowHandle] '$($RdpWindow.Title)'" -Type "WARNING" -Color Yellow
+                    }
+                }
+            }
+        } else {
+            Write-skSessionLog -Message "✔️ No matching windows found--nothing to do." -Type "DEBUG" -Color Yellow
+        }
+    } else {
+        Write-skSessionLog -Message "⏭️ RDP activity disabled--skipping RDP and RemoteApp windows." -Type "INFO" -Color Cyan
     }
     Write-skSessionLog -Message "========== Main Loop Completed ==========" -Type "INFO" -Color Cyan
 }
