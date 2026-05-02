@@ -63,24 +63,28 @@ $notifyIcon.ContextMenu = New-Object System.Windows.Forms.ContextMenu
 $notifyIcon.add_DoubleClick({
     Toggle-LogViewer
 })
-$menuItem_OpenLog = New-Object System.Windows.Forms.MenuItem
-$menuItem_OpenLog.Text = "Log Viewer"
-$menuItem_OpenLog.add_click({
-        Toggle-LogViewer
-    })
 $menuItem_Local = New-Object System.Windows.Forms.MenuItem
 $menuItem_Local.add_click({
         $script:localEnabled = -not $script:localEnabled
         Save-skConfig
         Update-skMenuLabels
-        Write-skSessionLog -Message "Local activity $($(if ($script:localEnabled) { 'enabled' } else { 'disabled' }))" -Type "INFO" -Color Cyan
+        Write-skSessionLog -Message "✔️ Local activity $($(if ($script:localEnabled) { 'enabled 🟢' } else { 'disabled 🔴' }))" -Type "SUCCESS" -Color Green
+        Write-skSessionLog -Message "Executing one-time main logic to reflect local activity change across all sessions..." -Type "INFO" -Color Cyan
+        Invoke-skLogic
     })
 $menuItem_Rdp = New-Object System.Windows.Forms.MenuItem
 $menuItem_Rdp.add_click({
         $script:rdpEnabled = -not $script:rdpEnabled
         Save-skConfig
         Update-skMenuLabels
-        Write-skSessionLog -Message "RDP activity $($(if ($script:rdpEnabled) { 'enabled' } else { 'disabled' }))" -Type "INFO" -Color Cyan
+        Write-skSessionLog -Message "✔️ RDP activity $($(if ($script:rdpEnabled) { 'enabled 🟢' } else { 'disabled 🔴' }))" -Type "SUCCESS" -Color Green
+        Write-skSessionLog -Message "Executing one-time main logic to reflect RDP activity change across all sessions..." -Type "INFO" -Color Cyan
+        Invoke-skLogic
+    })
+$menuItem_OpenLog = New-Object System.Windows.Forms.MenuItem
+$menuItem_OpenLog.Text = "Log Viewer"
+$menuItem_OpenLog.add_click({
+        Toggle-LogViewer
     })
 $menuItem_Exit = New-Object System.Windows.Forms.MenuItem
 $menuItem_Exit.Text = "Exit"
@@ -93,7 +97,12 @@ $menuItem_Exit.add_click({
         Start-Sleep 1
         [System.Windows.Forms.Application]::Exit()
     })
-$notifyIcon.ContextMenu.MenuItems.AddRange(@($menuItem_OpenLog, $menuItem_Local, $menuItem_Rdp, $menuItem_Exit))
+$notifyIcon.ContextMenu.MenuItems.AddRange(@(
+        $menuItem_Local, 
+        $menuItem_Rdp, 
+        $menuItem_OpenLog, 
+        $menuItem_Exit
+    ))
 $notifyIcon.Visible = $true
 
 #region CoreLogic and Helper Functions
