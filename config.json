@@ -1,6 +1,6 @@
 ﻿{
     "skHostKeystroke":  "{F15}",
     "loopIntervalSeconds":  240,
-    "localEnabled":  false,
+    "localEnabled":  true,
     "rdpEnabled":  true
 }
